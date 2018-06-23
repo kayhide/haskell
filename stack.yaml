@@ -12,6 +12,7 @@ packages:
 - tensorflow-records
 - tensorflow-records-conduit
 - tensorflow-test
+- try-tensorflow
 
 extra-deps:
 - snappy-framing-0.1.1
