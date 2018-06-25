@@ -1,40 +1,33 @@
--- Copyright 2016 TensorFlow authors.
---
--- Licensed under the Apache License, Version 2.0 (the "License");
--- you may not use this file except in compliance with the License.
--- You may obtain a copy of the License at
---
---     http://www.apache.org/licenses/LICENSE-2.0
---
--- Unless required by applicable law or agreed to in writing, software
--- distributed under the License is distributed on an "AS IS" BASIS,
--- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
--- See the License for the specific language governing permissions and
--- limitations under the License.
+module TrainMnist (run) where
 
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE TypeApplications #-}
+import           ClassyPrelude
 
-import Control.Monad (forM_, when)
-import Control.Monad.IO.Class (liftIO)
-import Data.Int (Int32, Int64)
-import Data.List (genericLength)
-import qualified Data.Text.IO as T
-import qualified Data.Vector as V
-import Data.Word (Word8)
+import           Data.List                           (cycle, genericLength,
+                                                      (!!))
+import           Data.List.Split                     (chunksOf)
+import qualified Data.Vector                         as V
 
-import qualified TensorFlow.Core as TF
-import qualified TensorFlow.Ops as TF hiding (initializedVariable, zeroInitializedVariable)
-import qualified TensorFlow.Variable as TF
-import qualified TensorFlow.Minimize as TF
+import qualified TensorFlow.Core                     as TF
+import qualified TensorFlow.Minimize                 as TF
+import qualified TensorFlow.Ops                      as TF hiding
+                                                            (initializedVariable,
+                                                            zeroInitializedVariable)
+import qualified TensorFlow.Variable                 as TF
 
-import TensorFlow.Examples.MNIST.InputData
-import TensorFlow.Examples.MNIST.Parse
+import           TensorFlow.Examples.MNIST.InputData (testImageData,
+                                                      testLabelData,
+                                                      trainingImageData,
+                                                      trainingLabelData)
+import           TensorFlow.Examples.MNIST.Parse     (MNIST, drawMNIST,
+                                                      readMNISTLabels,
+                                                      readMNISTSamples)
 
-numPixels, numLabels :: Int64
-numPixels = 28*28 :: Int64
-numLabels = 10 :: Int64
+
+numPixels :: Int64
+numPixels = 28*28
+
+numLabels :: Int64
+numLabels = 10
 
 -- | Create tensor with random values where the stddev depends on the width.
 randomParam :: Int64 -> TF.Shape -> TF.Build (TF.Tensor TF.Build Float)
@@ -51,7 +44,7 @@ data Model = Model {
             -> TF.TensorData LabelType
             -> TF.Session ()
     , infer :: TF.TensorData Float  -- ^ images
-            -> TF.Session (V.Vector LabelType)  -- ^ predictions
+            -> TF.Session (Vector LabelType)  -- ^ predictions
     , errorRate :: TF.TensorData Float  -- ^ images
                 -> TF.TensorData LabelType
                 -> TF.Session Float
@@ -103,47 +96,48 @@ createModel = do
               ] errorRateTensor
         }
 
-main :: IO ()
-main = TF.runSession $ do
+encodeImageBatch :: [MNIST] -> TF.TensorData Float
+encodeImageBatch xs =
+  TF.encodeTensorData [genericLength xs, numPixels]
+  (fromIntegral <$> mconcat xs)
+
+encodeLabelBatch :: [Word8] -> TF.TensorData LabelType
+encodeLabelBatch xs =
+  TF.encodeTensorData [genericLength xs]
+  (fromIntegral <$> V.fromList xs)
+
+run :: IO ()
+run = TF.runSession $ do
     -- Read training and test data.
-    trainingImages <- liftIO (readMNISTSamples =<< trainingImageData)
+    trainingImages :: [MNIST] <- liftIO (readMNISTSamples =<< trainingImageData)
     trainingLabels <- liftIO (readMNISTLabels =<< trainingLabelData)
-    testImages <- liftIO (readMNISTSamples =<< testImageData)
+    testImages :: [MNIST] <- liftIO (readMNISTSamples =<< testImageData)
     testLabels <- liftIO (readMNISTLabels =<< testLabelData)
 
     -- Create the model.
     model <- TF.build createModel
 
-    -- Functions for generating batches.
-    let encodeImageBatch :: [V.Vector Word8] -> TF.TensorData Float
-        encodeImageBatch xs =
-            TF.encodeTensorData [genericLength xs, numPixels]
-                                (fromIntegral <$> mconcat xs)
-    let encodeLabelBatch xs =
-            TF.encodeTensorData [genericLength xs]
-                                (fromIntegral <$> V.fromList xs)
-    let batchSize = 100
-    let selectBatch i xs = take batchSize $ drop (i * batchSize) (cycle xs)
-
     -- Train.
-    forM_ ([0..1000] :: [Int]) $ \i -> do
-        let images = encodeImageBatch (selectBatch i trainingImages :: [MNIST]) :: TF.TensorData Float
-            labels = encodeLabelBatch (selectBatch i trainingLabels) :: TF.TensorData LabelType
-        train model images labels
-        when (i `mod` 100 == 0) $ do
+    let train' (i :: Int, (images, labels)) = do
+          train model images labels
+          when (i `mod` 100 == 0) $ do
             err <- errorRate model images labels
-            liftIO $ putStrLn $ "training error " ++ show (err * 100)
+            liftIO $ putStrLn $ "training error " <> tshow (err * 100)
+    let imageBatches = encodeImageBatch <$> chunksOf 100 (cycle trainingImages)
+        labelBatches = encodeLabelBatch <$> chunksOf 100 (cycle trainingLabels)
+        batches = zip imageBatches labelBatches
+    traverse_ train' $ zip [0..1000] batches
     liftIO $ putStrLn ""
 
     -- Test.
     testErr <- errorRate model (encodeImageBatch testImages)
                                (encodeLabelBatch testLabels)
-    liftIO $ putStrLn $ "test error " ++ show (testErr * 100)
+    liftIO $ putStrLn $ "test error " <> tshow (testErr * 100)
 
     -- Show some predictions.
     testPreds <- infer model (encodeImageBatch testImages)
     liftIO $ forM_ ([0..3] :: [Int]) $ \i -> do
         putStrLn ""
-        T.putStrLn $ drawMNIST $ testImages !! i
-        putStrLn $ "expected " ++ show (testLabels !! i)
-        putStrLn $ "     got " ++ show (testPreds V.! i)
+        putStrLn $ drawMNIST $ testImages !! i
+        putStrLn $ "expected " <> tshow (testLabels !! i)
+        putStrLn $ "     got " <> tshow (testPreds V.! i)

@@ -32,10 +32,16 @@ dependencies:
 - typed-process
 - exceptions
 - random
+- binary
 - classy-prelude
+- split
 - tensorflow
 - tensorflow-core-ops
 - tensorflow-ops
+- tensorflow-mnist
+- tensorflow-mnist-input-data
+- lens-family
+- proto-lens
 
 default-extensions:
 - AutoDeriveTypeable
